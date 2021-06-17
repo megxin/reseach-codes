@@ -1,0 +1,249 @@
+//ww1(originwave),hour(per nhour wave),ser_hour(per serch hour)
+
+chg_analysis_med(ww1,hour,ser_hour,en){
+    //対象ウィンドウ移動と波形の長さ取得(サンプリング数) & 各種設定
+    //go to window and get wave's length(sampling number)
+    start_wnum = getwnum(ww1); //開始ウィンドウ位置取得
+    start_wname = castwindow(start_wnum); //ウィンドウ番号取得
+    gotowindow(start_wname); //ウィンドウ位置に移動
+    start_x = xoffset(start_wnum); //開始日[Days]の取得
+    target_ser = w0;　//波形取得
+    w_len = length(target_ser); //波形長取得
+
+    label(start_wname,"origin wave"); //ウィンドウに題名をつける
+    addwin(10-numwindows); //１０個までウィンドウを生成
+    max_win_num = 10;
+
+    last_wname = castwindow(max_win_num);　
+    
+    //中央値波形のウィンドウ生成と題名付け
+    med_wname = castwindow(start_wnum+1);
+    gotowindow(med_wname);
+    label(w0,"per hour wave");
+
+    //日内変動波形のウィンドウ生成と題名付け
+    cir_wname = castwindow(start_wnum+2);
+    gotowindow(cir_wname);
+    label(w0,"diff circadian wave");
+
+    //NSI波形のウィンドウ生成と題名付け
+    nsi_wname = castwindow(start_wnum+3);
+    gotowindow(nsi_wname);
+    label(w0,"NSI");
+
+    //結果波形のウィンドウ生成と題名付け
+    result_wname = castwindow(start_wnum+4);
+    gotowindow(result_wname);
+    label(w0,"result wave",hour);
+    gline(150, 3600, 0.0000000000001, 0); //波形の生成（更新できないため）
+    sethunit("Days"); //x軸を[Days]に変える
+    setdeltax(w0,3600*hour); //サンプル間隔を時間おきに変更(1h = 3600s)
+    setxoffset(w0,start_x+3);　//波形のスタート位置を設定
+
+
+    gotowindow(start_wname); //初期位置に戻る
+
+    //波形の長さが解析可能か判別
+    //confirm proper wave's length to analysis
+    if(w_len < 720*4){
+        pritf("波長長が足りません");
+        exit(1);
+    }
+
+    //時間が24の約数か判別
+    //confirm proper wave's length to analysis
+    if(24 % hour != 0 || 24 % ser_hour != 0){
+        printf("hour,ser_hourを24の約数にしてください");
+        exit(1);
+    }
+
+
+    //2分間隔の波形からn時間ごとの中央値に変更[n << hour]
+    //change per 2min wave to per n hour median wave [n << hour]
+    med_h_w = med_ser(target_ser,hour); //中央値波形生成関数(対象ウィンドウ,中央値取得間隔時間)
+    w_len = length(med_h_w); //波形長再取得
+
+    gotowindow(med_wname);
+    w0 = med_h_w; //中央値波形表示
+
+    day_p = 24 / hour; //1日のサンプリング数取得
+    start_p = day_p*3 + 1; //ループスタート位置
+    
+
+    tar_w = med_h_w; //対象波形取得
+    diff_cir = {}; //日内変動を入れる配列生成
+    gotowindow(cir_wname); //対象ウィンドウ移動
+
+
+    //ここからser_hour時間ごとのNSIの変化をあらわすための繰り返し処理
+    for(z=start_p;z<=w_len;z++){
+        //日内変動平均との差
+        //difference of circadian mean
+        echo(sprintf("loading %d / %d",z,w_len)); //進捗表示
+    
+
+        mean_3d = (tar_w[z] + tar_w[z-day_p] + tar_w[z-day_p*2])/3; //前3日間の平均値
+        tmp = tar_w[z] - mean_3d; //平均値との差取得
+        diff_cir = {diff_cir,tmp}; //日内変動差を配列に保存 
+
+        gotowindow(cir_wname);
+        w0 = diff_cir; //日内変動波形表示
+
+        //解析処理 ser_hour
+        //process analysis 
+        if(z >= day_p && z%ser_hour==0){
+            //wavelet
+            setdeltax(cir_wname,0.05); //サンプリング間隔変更(3600Hz >> 0.05Hz)
+            m_gwt_win(diff_cir,0.5,0.05,1.5,0,max_win_num); //ウェーブレット変換関数(対象ウィンドウ,シグマ値,探査間隔,最高周波数,正規化値,最大ウィンドウname)
+
+            //NSI
+            pre_w =w0; //ウェーブレット波形取得
+            nsi_w=nsi(pre_w,en); //NSI算出関数(対象ウィンドウ,power値)
+            gotowindow(nsi_wname);
+            w0 = nsi_w; //NSI波形表示
+
+            gotowindow(result_wname); 
+            overplot(nsi_wname); //結果波形表示(ser_hourごと)
+        }
+    }
+
+    //ウィンドウ表示設定と波形表示
+    gotowindow(med_wname);
+    w0 = med_h_w;
+    sethunit("Days");
+    setdeltax(w0,3600*hour);
+    setxoffset(w0,start_x);
+
+    gotowindow(cir_wname);
+    sethunit("Days");
+    setdeltax(cir_wname,3600*hour);
+    setxoffset(cir_wname,start_x+3);
+    
+    gotowindow(nsi_wname);
+    w0 = nsi_w;
+    sethunit("Days");
+    setdeltax(w0,3600*hour);
+    setxoffset(w0,start_x+3);
+}
+
+//-----------------------------------------------------//
+//二分間隔の波形から任意のn時間波形への変換[n = hour]     //
+//change per 2min wave to per n hour wave [n = hour]  //
+//----------------------------------------------------//
+med_ser(target_ser,hour){
+    med_num_h = 30 * hour; //1時間ごとのサンプリング数取得
+    double tmp_w[med_num_h]; //保存変数定義
+    med_h_w = {}; //中央値を入れる配列生成
+    w_len = length(target_ser); //波形長取得
+   
+   //中央値波形生成loop
+    for(k=1;k<=w_len;k=k+med_num_h){
+        //波形余りを処理のための分岐
+        if(k+med_num_h > w_len){
+            sp = (k+med_num_h)-w_len;
+            sp = med_num_h-sp;
+            for(j=0;j<med_num_h;j++){
+                if(j<sp){
+                    tmp_w[j+1] = target_ser[k+j];
+                }else{
+                    tmp_w[j+1] = target_ser[w_len];
+                }
+            }
+        }else{
+            for(j=0;j<med_num_h;j++){
+               tmp_w[j+1] = target_ser[k+j];
+            }
+        }
+        tmp_med = median(tmp_w); //中央値取得
+        med_h_w = {med_h_w,tmp_med}; //中央値を配列に保存
+    }
+
+    return(med_h_w); //中央値波形を戻す
+}
+
+//-----------------------------------------------------//
+//連続ウェーブレット変換(高Hz→0.05Hz)                    //
+//wavelet translation (high Hz >> 0.05Hz)              //
+//-----------------------------------------------------//
+m_gwt_win(ww1, sigma, delta_hz, max_hz, normalize,max_win_num) {
+	
+	echo("start m_gwt");
+	
+	//sigma = 0.5;
+	omega_0 = 2*pi*2;
+	dt = deltax(ww1);
+	
+	// 対象ウィンドウの周波数の取得
+	delta_x = deltax(ww1);
+	base_hz = 1/delta_x;
+	
+	ret_table={}; // 結果のテーブル初期化
+	// 各周波数でウェーブレット変換
+	N = max_hz / delta_hz;
+	for(j=1; j<=N; j++) {
+		
+		echo(sprintf("calc iter %d / %d ... ", j, N));
+		start_time = clock();
+		
+		omega = (2.0*delta_hz)*pi*j;
+		a = omega_0 / omega;
+		wvl_time = sigma * 3 * 2 * a;
+		t = -wvl_time/2..dt..wvl_time/2;
+		t /= a;
+		
+		gauss = exp((-t^2)/(2+sigma^2)) / sqrt((2*pi*sigma^2));
+		psi = gauss * (exp(1i * omega_0 * t) - exp(-1/2*sigma^2*omega_0^2));
+        psi = 1/sqrt(a)*psi;  // ガボールウェーブレット
+		
+		Y = abs(conv(ww1, psi)) * dt;
+		// 畳みこみで長くなった信号長を元に戻す
+		f_len = length(psi);
+		rem_v = rem(f_len, 2);
+        f_len = f_len + rem_v;
+		
+		y_ser = extract(Y, int(f_len/2), length(ww1));
+		ret_table = ravel(ret_table, y_ser);
+		
+		end_time = clock();
+		echo(sprintf("time %g sec", end_time - start_time));
+	}
+	// 正規化
+	if(normalize == 1) {
+		ret_table /= rowmax(ret_table);
+	}
+	ret_table = ret_table^2;
+
+    last_wname = castwindow(max_win_num);
+    gotowindow(last_wname);
+
+	// 結果出力
+	w0 = ret_table;
+	
+	// 各種設定
+	setdeltay(delta_hz);
+	setyoffset(0);
+	setplottype(3);
+	rainbow;
+	
+	//label(sprintf("gabor sigma = %f", sigma));
+	//label(sprintf("m_gwt(w%d, %f, %d)",getwnum(ww1), sigma, N));
+	
+	echo("complete");
+	
+	return();
+}
+
+//-----------------------------------------------------//
+//NSI生成                                              //
+//generate NSI                                         //
+//-----------------------------------------------------//
+
+nsi(ww1, en) {
+	
+	ser1 = rowsum(ww1 * yval(ww1)/ (1-ww1)^en ); //enでpower値調節
+	ser2 = rowsum(ww1);
+	
+	nsi = ser1/ser2;
+	
+    return(nsi);
+}
